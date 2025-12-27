@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pillow
+numpy
+python-multipart
+scikit-learn
+requests
+python-dotenv
+requests
+tensorflow-cpu==2.13.0
