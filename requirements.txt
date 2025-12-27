@@ -1,10 +1,9 @@
 fastapi
 uvicorn
+tensorflow
 pillow
 numpy
 python-multipart
 scikit-learn
 requests
 python-dotenv
-requests
-tensorflow
