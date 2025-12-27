@@ -7,4 +7,4 @@ scikit-learn
 requests
 python-dotenv
 requests
-tensorflow-cpu==2.13.0
+tensorflow
