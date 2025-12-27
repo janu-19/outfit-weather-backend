@@ -8,3 +8,6 @@ requests
 python-dotenv
 cloudinary
 sqlalchemy
+python-jose[cryptography]
+bcrypt
+email-validator

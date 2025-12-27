@@ -8,7 +8,8 @@ from datetime import date, timedelta
 from pydantic import BaseModel
 
 from database import get_db, init_db
-from models import Outfit
+from models import Outfit, User
+from auth import get_current_user
 from cloudinary_config import upload_image_to_cloudinary
 from ml.extract_features import extract_features
 from ml.classifier import predict_outfit_type
@@ -40,7 +41,8 @@ class OutfitUpdate(BaseModel):
 @router.post("/upload-outfit")
 async def upload_outfit(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Upload outfit image to Cloudinary and optionally run ML prediction.
@@ -91,7 +93,8 @@ async def upload_outfit(
 @router.post("/save-outfit")
 async def save_outfit(
     outfit_data: OutfitCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Save outfit to wardrobe database.
@@ -102,7 +105,8 @@ async def save_outfit(
         color=outfit_data.color,
         occasion=outfit_data.occasion,
         notes=outfit_data.notes,
-        confidence=outfit_data.confidence
+        confidence=outfit_data.confidence,
+        owner_id=current_user.id
     )
     
     db.add(outfit)
@@ -119,12 +123,13 @@ async def save_outfit(
 async def get_wardrobe(
     category: Optional[str] = None,
     occasion: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Get all outfits from wardrobe with optional filters.
+    Get all outfits from wardrobe with optional filters (user-specific).
     """
-    query = db.query(Outfit)
+    query = db.query(Outfit).filter(Outfit.owner_id == current_user.id)
     
     if category:
         query = query.filter(Outfit.category == category.lower())
@@ -142,12 +147,16 @@ async def get_wardrobe(
 @router.get("/outfit/{outfit_id}")
 async def get_outfit(
     outfit_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Get a specific outfit by ID.
+    Get a specific outfit by ID (must belong to current user).
     """
-    outfit = db.query(Outfit).filter(Outfit.id == outfit_id).first()
+    outfit = db.query(Outfit).filter(
+        Outfit.id == outfit_id,
+        Outfit.owner_id == current_user.id
+    ).first()
     
     if not outfit:
         raise HTTPException(status_code=404, detail="Outfit not found")
@@ -159,12 +168,16 @@ async def get_outfit(
 async def update_outfit(
     outfit_id: int,
     outfit_update: OutfitUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Update outfit details.
+    Update outfit details (must belong to current user).
     """
-    outfit = db.query(Outfit).filter(Outfit.id == outfit_id).first()
+    outfit = db.query(Outfit).filter(
+        Outfit.id == outfit_id,
+        Outfit.owner_id == current_user.id
+    ).first()
     
     if not outfit:
         raise HTTPException(status_code=404, detail="Outfit not found")
@@ -190,12 +203,16 @@ async def update_outfit(
 @router.delete("/outfit/{outfit_id}")
 async def delete_outfit(
     outfit_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Delete outfit from wardrobe.
+    Delete outfit from wardrobe (must belong to current user).
     """
-    outfit = db.query(Outfit).filter(Outfit.id == outfit_id).first()
+    outfit = db.query(Outfit).filter(
+        Outfit.id == outfit_id,
+        Outfit.owner_id == current_user.id
+    ).first()
     
     if not outfit:
         raise HTTPException(status_code=404, detail="Outfit not found")
@@ -209,12 +226,16 @@ async def delete_outfit(
 @router.post("/wear-outfit/{outfit_id}")
 async def wear_outfit(
     outfit_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Mark outfit as worn today.
+    Mark outfit as worn today (must belong to current user).
     """
-    outfit = db.query(Outfit).filter(Outfit.id == outfit_id).first()
+    outfit = db.query(Outfit).filter(
+        Outfit.id == outfit_id,
+        Outfit.owner_id == current_user.id
+    ).first()
     
     if not outfit:
         raise HTTPException(status_code=404, detail="Outfit not found")
@@ -232,10 +253,11 @@ async def wear_outfit(
 @router.get("/outfits-by-date/{wear_date}")
 async def outfits_by_date(
     wear_date: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Get all outfits worn on a specific date.
+    Get all outfits worn on a specific date (user-specific).
     Date format: YYYY-MM-DD
     """
     try:
@@ -244,7 +266,8 @@ async def outfits_by_date(
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
     outfits = db.query(Outfit).filter(
-        Outfit.last_worn_date == target_date
+        Outfit.last_worn_date == target_date,
+        Outfit.owner_id == current_user.id
     ).all()
     
     return {
@@ -257,14 +280,16 @@ async def outfits_by_date(
 @router.get("/not-worn-recently")
 async def not_worn_recently(
     days: int = 30,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Get outfits not worn in the last N days.
+    Get outfits not worn in the last N days (user-specific).
     """
     cutoff_date = date.today() - timedelta(days=days)
     
     outfits = db.query(Outfit).filter(
+        Outfit.owner_id == current_user.id,
         (Outfit.last_worn_date < cutoff_date) | (Outfit.last_worn_date.is_(None))
     ).all()
     
@@ -282,15 +307,17 @@ async def suggest_outfits(
     occasion: Optional[str] = None,
     avoid_recent: bool = True,
     days: int = 7,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
     Smart outfit suggestions based on:
     - Category (optional)
     - Occasion (optional)
     - Avoid recently worn outfits
+    All suggestions are user-specific.
     """
-    query = db.query(Outfit)
+    query = db.query(Outfit).filter(Outfit.owner_id == current_user.id)
     
     # Filter by category if provided
     if category:
@@ -317,25 +344,39 @@ async def suggest_outfits(
 
 
 @router.get("/stats")
-async def wardrobe_stats(db: Session = Depends(get_db)):
+async def wardrobe_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     """
-    Get wardrobe statistics.
+    Get wardrobe statistics (user-specific).
     """
-    total_outfits = db.query(Outfit).count()
+    total_outfits = db.query(Outfit).filter(Outfit.owner_id == current_user.id).count()
     
     # Count by category
-    categories = db.query(Outfit.category).distinct().all()
+    categories = db.query(Outfit.category).filter(
+        Outfit.owner_id == current_user.id
+    ).distinct().all()
     category_counts = {}
     for cat in categories:
-        count = db.query(Outfit).filter(Outfit.category == cat[0]).count()
+        count = db.query(Outfit).filter(
+            Outfit.category == cat[0],
+            Outfit.owner_id == current_user.id
+        ).count()
         category_counts[cat[0]] = count
     
     # Count never worn
-    never_worn = db.query(Outfit).filter(Outfit.last_worn_date.is_(None)).count()
+    never_worn = db.query(Outfit).filter(
+        Outfit.owner_id == current_user.id,
+        Outfit.last_worn_date.is_(None)
+    ).count()
     
     # Count worn in last 7 days
     week_ago = date.today() - timedelta(days=7)
-    recently_worn = db.query(Outfit).filter(Outfit.last_worn_date >= week_ago).count()
+    recently_worn = db.query(Outfit).filter(
+        Outfit.owner_id == current_user.id,
+        Outfit.last_worn_date >= week_ago
+    ).count()
     
     return {
         "total_outfits": total_outfits,

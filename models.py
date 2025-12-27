@@ -1,9 +1,29 @@
 """
 Database models for wardrobe system
 """
-from sqlalchemy import Column, Integer, String, Date, DateTime, Float
+from sqlalchemy import Column, Integer, String, Date, DateTime, Float, ForeignKey
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    outfits = relationship("Outfit", back_populates="owner", cascade="all, delete-orphan")
+
+    def to_dict(self):
+        """Convert user to dictionary (without password)"""
+        return {
+            "id": self.id,
+            "email": self.email,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
 
 
 class Outfit(Base):
@@ -20,6 +40,10 @@ class Outfit(Base):
     notes = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Foreign key to User
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    owner = relationship("User", back_populates="outfits")
 
     def to_dict(self):
         """Convert outfit to dictionary"""
@@ -33,6 +57,7 @@ class Outfit(Base):
             "last_worn_date": self.last_worn_date.isoformat() if self.last_worn_date else None,
             "confidence": self.confidence,
             "notes": self.notes,
+            "owner_id": self.owner_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }

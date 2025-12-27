@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routes import outfit, travel, wardrobe
+from routes import outfit, travel, wardrobe, auth
 
 app = FastAPI(title="AI Outfit & Weather Assistant")
  
@@ -12,6 +12,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router)
 app.include_router(outfit.router)
 app.include_router(travel.router)
 app.include_router(wardrobe.router)
