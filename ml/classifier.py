@@ -66,6 +66,22 @@ def predict_outfit_type(query_features):
     return final_label, confidence
 
 
+def get_available_categories():
+    """
+    Get all available outfit categories for manual selection.
+    """
+    if class_labels:
+        return sorted(class_labels)
+    
+    # Fallback: get from reference_images directory
+    if os.path.isdir(REFERENCE_DIR):
+        categories = [d for d in os.listdir(REFERENCE_DIR) 
+                     if os.path.isdir(os.path.join(REFERENCE_DIR, d))]
+        return sorted(categories)
+    
+    return []
+
+
 
 
 

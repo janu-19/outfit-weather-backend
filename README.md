@@ -14,8 +14,11 @@ AI-powered outfit recommendation system based on weather conditions.
 ## Tech Stack
 
 - **FastAPI** - Modern, fast web framework for building APIs
-- **TensorFlow** - Machine learning for image classification
+- **PIL/Pillow** - Image processing and feature extraction
+- **scikit-learn** - Machine learning for outfit classification
 - **OpenWeatherMap API** - Weather data
+- **SQLAlchemy** - Database ORM
+- **Cloudinary** - Image storage
 - **Python 3.10+**
 
 ## Setup

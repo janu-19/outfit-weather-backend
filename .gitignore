@@ -1,6 +1,16 @@
 # Environment variables
 .env
 
+# Feedback data (for retraining)
+feedback_data/
+
+# Database
+*.db
+*.db-journal
+
+# Documentation files
+*.md
+
 # Python
 __pycache__/
 *.py[cod]
