@@ -58,13 +58,7 @@ async def predict_outfit(file: UploadFile = File(...), db: Session = Depends(get
     
     needs_confirmation = confidence < CONFIDENCE_THRESHOLD
 
-    return to_native_types({
-        "predicted_class": outfit,
-        "confidence": confidence,
-        "image_url": image_url,
-        "public_id": public_id,
-        "needs_confirmation": needs_confirmation,
-    # 4. Save to DB for future learning
+
     user_upload = UserUpload(
         image_url=image_url if image_url else "",
         public_id=public_id,
