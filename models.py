@@ -62,3 +62,36 @@ class Outfit(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
 
+
+class UserUpload(Base):
+    """
+    Store for all user uploaded images for prediction and future learning.
+    This enables the "Offline Learning" workflow.
+    """
+    __tablename__ = "user_uploads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    image_url = Column(String, nullable=False)
+    public_id = Column(String, nullable=True) # Cloudinary ID
+    
+    # ML Prediction
+    predicted_category = Column(String, nullable=True)
+    confidence = Column(Float, nullable=True)
+    
+    # User Verification
+    user_label = Column(String, nullable=True) # Correct label provided by user
+    is_verified = Column(Integer, default=0)   # 0=Pending, 1=Verified, -1=Rejected (e.g. bad image)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "image_url": self.image_url,
+            "predicted_category": self.predicted_category,
+            "confidence": self.confidence,
+            "user_label": self.user_label,
+            "is_verified": bool(self.is_verified),
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+

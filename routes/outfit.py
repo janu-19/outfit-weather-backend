@@ -1,4 +1,7 @@
-from fastapi import APIRouter, UploadFile, File, Body
+from fastapi import APIRouter, UploadFile, File, Body, Depends, HTTPException
+from sqlalchemy.orm import Session
+from database import get_db
+from models import UserUpload
 from pydantic import BaseModel
 from typing import Optional
 from PIL import Image
@@ -25,7 +28,7 @@ from cloudinary_config import upload_image_to_cloudinary
 import io
 
 @router.post("/predict-outfit")
-async def predict_outfit(file: UploadFile = File(...)):
+async def predict_outfit(file: UploadFile = File(...), db: Session = Depends(get_db)):
     """
     Predict outfit type from image.
     Uploads image to Cloudinary and returns prediction with confidence.
@@ -56,6 +59,25 @@ async def predict_outfit(file: UploadFile = File(...)):
     needs_confirmation = confidence < CONFIDENCE_THRESHOLD
 
     return to_native_types({
+        "predicted_class": outfit,
+        "confidence": confidence,
+        "image_url": image_url,
+        "public_id": public_id,
+        "needs_confirmation": needs_confirmation,
+    # 4. Save to DB for future learning
+    user_upload = UserUpload(
+        image_url=image_url if image_url else "",
+        public_id=public_id,
+        predicted_category=outfit,
+        confidence=confidence,
+        is_verified=0
+    )
+    db.add(user_upload)
+    db.commit()
+    db.refresh(user_upload)
+
+    return to_native_types({
+        "id": user_upload.id,
         "predicted_class": outfit,
         "confidence": confidence,
         "image_url": image_url,
@@ -127,79 +149,28 @@ async def outfit_weather(
 
 
 # Feedback model for user corrections
-class FeedbackRequest(BaseModel):
-    image_url: Optional[str] = None
-    user_selected_category: str
-    model_predicted_category: Optional[str] = None
-    confidence: Optional[float] = None
-    notes: Optional[str] = None
+class VerifyRequest(BaseModel):
+    image_id: int
+    user_label: str
 
 
-import requests
-from ml.classifier import load_reference_prototypes, REFERENCE_DIR
-
-@router.post("/feedback")
-async def submit_feedback(feedback: FeedbackRequest):
+@router.post("/verify-outfit")
+async def verify_outfit(verify_data: VerifyRequest, db: Session = Depends(get_db)):
     """
-    Submit user feedback.
-    If a valid image URL and category are provided, saves the image as a new reference 
-    and updates the model prototypes (Online Learning).
+    Verify/Correct a prediction.
+    Updates the database with the correct label and marks as verified.
     """
-    feedback_data = {
-        "timestamp": datetime.now().isoformat(),
-        "user_selected_category": feedback.user_selected_category,
-        "model_predicted_category": feedback.model_predicted_category,
-        "confidence": feedback.confidence,
-        "image_url": feedback.image_url,
-        "notes": feedback.notes
+    upload = db.query(UserUpload).filter(UserUpload.id == verify_data.image_id).first()
+    
+    if not upload:
+        raise HTTPException(status_code=404, detail="Image record not found")
+    
+    upload.user_label = verify_data.user_label
+    upload.is_verified = 1
+    db.commit()
+    
+    return {
+        "message": "Verification saved successfully", 
+        "status": "success",
+        "verified_label": verify_data.user_label
     }
-    
-    # 1. Save feedback to JSONL log
-    feedback_dir = "feedback_data"
-    os.makedirs(feedback_dir, exist_ok=True)
-    feedback_file = os.path.join(feedback_dir, f"feedback_{datetime.now().strftime('%Y%m%d')}.jsonl")
-    
-    try:
-        with open(feedback_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(feedback_data) + "\n")
-            
-        # 2. "Learn" from the new image if valid category and URL
-        if feedback.image_url and feedback.user_selected_category:
-            # Create category directory if needed
-            category_dir = os.path.join(REFERENCE_DIR, feedback.user_selected_category.lower())
-            os.makedirs(category_dir, exist_ok=True)
-            
-            # Download image
-            try:
-                # Use requests to download
-                response = requests.get(feedback.image_url, timeout=10)
-                if response.status_code == 200:
-                    # Save image
-                    filename = f"user_upload_{int(datetime.now().timestamp())}.jpg"
-                    file_path = os.path.join(category_dir, filename)
-                    
-                    with open(file_path, "wb") as img_f:
-                        img_f.write(response.content)
-                        
-                    # Reload model prototypes
-                    load_reference_prototypes()
-                    
-                    return {
-                        "message": "Feedback saved and model updated with new reference image!",
-                        "status": "success",
-                        "model_updated": True
-                    }
-            except Exception as e:
-                print(f"Failed to learn from image: {e}")
-                # Fall through to return success for feedback saving even if learning failed
-        
-        return {
-            "message": "Feedback saved successfully",
-            "status": "success",
-            "model_updated": False
-        }
-    except Exception as e:
-        return {
-            "message": f"Error saving feedback: {str(e)}",
-            "status": "error"
-        }

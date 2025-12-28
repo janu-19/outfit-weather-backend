@@ -14,9 +14,28 @@ class_prototypes = {}
 class_labels = []
 class_vectors = np.array([])
 
+# Model file paths
+MODEL_DIR = os.path.dirname(__file__)
+VECTORS_FILE = os.path.join(MODEL_DIR, "vectors.npy")
+LABELS_FILE = os.path.join(MODEL_DIR, "labels.pkl")
+import pickle
+
 
 def load_reference_prototypes():
     global class_features, class_prototypes, class_labels, class_vectors
+    
+    # 1. Try to load pre-computed model from disk (Fast & separate from code)
+    if os.path.exists(VECTORS_FILE) and os.path.exists(LABELS_FILE):
+        try:
+            print("Loading pre-computed model...")
+            class_vectors = np.load(VECTORS_FILE)
+            with open(LABELS_FILE, "rb") as f:
+                class_labels = pickle.load(f)
+            return
+        except Exception as e:
+            print(f"Failed to load model files: {e}. Falling back to image scanning.")
+
+    # 2. Fallback: Scan reference_images folder (Slow, but works without training step)
     class_features = defaultdict(list)
 
     if not os.path.isdir(REFERENCE_DIR):
@@ -25,6 +44,7 @@ def load_reference_prototypes():
         class_vectors = np.array([])
         return
 
+    print("Scanning reference images...")
     for label in os.listdir(REFERENCE_DIR):
         label_path = os.path.join(REFERENCE_DIR, label)
         if not os.path.isdir(label_path):
