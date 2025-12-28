@@ -168,3 +168,24 @@ async def verify_outfit(verify_data: VerifyRequest, db: Session = Depends(get_db
         "status": "success",
         "verified_label": verify_data.user_label
     }
+
+
+@router.get("/debug/verified-uploads")
+async def get_verified_uploads(db: Session = Depends(get_db)):
+    """
+    Debug endpoint to view all verified user uploads.
+    Useful for checking if feedback is being saved correctly on the server.
+    """
+    uploads = db.query(UserUpload).filter(UserUpload.is_verified == 1).all()
+    
+    return [
+        {
+            "id": u.id,
+            "image_url": u.image_url,
+            "predicted": u.predicted_category,
+            "user_label": u.user_label,
+            "confidence": u.confidence,
+            "created_at": u.created_at
+        }
+        for u in uploads
+    ]
