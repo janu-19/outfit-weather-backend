@@ -1,6 +1,7 @@
 import os
 import requests
 from dotenv import load_dotenv
+from datetime import datetime
 
 # Load environment variables from .env file
 load_dotenv()
@@ -13,13 +14,22 @@ def get_weather(city):
     city = city.strip() if city else ""
 
     # Default fallback details
-    default_details = {"humidity": None, "clouds": None, "description": "Unknown", "sun_exposure": "Unknown"}
+    default_details = {
+        "humidity": None, 
+        "clouds": None, 
+        "description": "Unknown", 
+        "sun_exposure": "Unknown",
+        "min_temp": 20,
+        "max_temp": 20,
+        "daily_rain_prob": 0
+    }
 
     if not city:
         print("City name is empty")
         return 20, 0, default_details
 
-    url = "https://api.openweathermap.org/data/2.5/weather"
+    # Use 5 day / 3 hour forecast to get daily min/max
+    url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {
         "q": city,
         "appid": API_KEY,
@@ -30,25 +40,50 @@ def get_weather(city):
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
 
-        #  API error (wrong city / invalid key / limit exceeded)
         if response.status_code != 200:
             print(f"Weather API error for {city}: {data}")
             return 20, 0, default_details
 
-        temp = data.get("main", {}).get("temp", 20)
-        rain = data.get("rain", {}).get("1h", 0)
-        humidity = data.get("main", {}).get("humidity")
-        clouds = data.get("clouds", {}).get("all")
-        weather_desc = " ".join([w.get("description", "") for w in data.get("weather", [])]).strip() or data.get("weather", [{}])[0].get("main", "")
+        # Get current items for today (approximate by taking first 8 intervals = 24h)
+        # Or better: filter by date.
+        
+        forecast_list = data.get("list", [])
+        if not forecast_list:
+            return 20, 0, default_details
 
-        # Approximate sun exposure from cloud cover and temperature
+        # Current weather is roughly the first item
+        current = forecast_list[0]
+        current_temp = current.get("main", {}).get("temp", 20)
+        current_humidity = current.get("main", {}).get("humidity")
+        current_clouds = current.get("clouds", {}).get("all")
+        current_desc = current.get("weather", [{}])[0].get("description", "Unknown")
+
+        # Calculate daily min/max and rain prob from the next 24h (8 items)
+        next_24h = forecast_list[:8]
+        temps = [item.get("main", {}).get("temp") for item in next_24h]
+        min_temp = min(temps)
+        max_temp = max(temps)
+        
+        # Rain probability (pop is Probability of Precipitation)
+        # Max pop in next 24h
+        pops = [item.get("pop", 0) for item in next_24h]
+        max_pop = max(pops)
+        daily_rain_prob = max_pop * 100 # Convert to percentage
+
+        # Determine overall rain volume (approx)
+        total_rain_vol = 0
+        for item in next_24h:
+            rain_info = item.get("rain", {})
+            total_rain_vol += rain_info.get("3h", 0)
+
+        # Approximate sun exposure
         sun_exposure = "Unknown"
         try:
-            if clouds is None:
+            if current_clouds is None:
                 sun_exposure = "Unknown"
-            elif clouds < 30 and temp >= 25:
+            elif current_clouds < 30 and current_temp >= 25:
                 sun_exposure = "☀ Strong sun exposure"
-            elif clouds < 50 and temp >= 20:
+            elif current_clouds < 50 and current_temp >= 20:
                 sun_exposure = "☀ Moderate sun exposure"
             else:
                 sun_exposure = "☁ Low sun exposure"
@@ -57,24 +92,34 @@ def get_weather(city):
 
         # Humidity descriptor
         humidity_desc = None
-        if humidity is not None:
-            if humidity <= 40:
+        if current_humidity is not None:
+            if current_humidity <= 40:
                 humidity_desc = " Low humidity"
-            elif humidity <= 70:
+            elif current_humidity <= 70:
                 humidity_desc = " Moderate humidity"
             else:
                 humidity_desc = " High humidity"
 
         details = {
-            "humidity": humidity,
+            "humidity": current_humidity,
             "humidity_desc": humidity_desc,
-            "clouds": clouds,
-            "description": weather_desc,
-            "sun_exposure": sun_exposure
+            "clouds": current_clouds,
+            "description": current_desc,
+            "sun_exposure": sun_exposure,
+            "min_temp": min_temp,
+            "max_temp": max_temp,
+            "daily_rain_prob": daily_rain_prob
         }
 
-        print(f"Weather data for {city}: temp={temp}, rain={rain}, humidity={humidity}, clouds={clouds}")
-        return temp, rain, details
+        print(f"Weather data for {city}: current={current_temp}, min={min_temp}, max={max_temp}, rain_prob={daily_rain_prob}%")
+        
+        # Return current_temp for main logic, but pass daily stats in details
+        # Pass predicted rain (pop) as the main rain metric if it's high, or volume
+        # The original code expected rain volume in mm? or boolean?
+        # Original: rain = data.get("rain", {}).get("1h", 0) -> This is mm.
+        # Let's return total_rain_vol for compatibility but use max_pop for advice.
+        
+        return current_temp, total_rain_vol, details
 
     except requests.exceptions.RequestException as e:
         print(f"Network error fetching weather for {city}: {e}")

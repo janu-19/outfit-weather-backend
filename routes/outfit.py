@@ -27,11 +27,76 @@ CONFIDENCE_THRESHOLD = 0.6
 from cloudinary_config import upload_image_to_cloudinary
 import io
 
-@router.post("/predict-outfit")
-async def predict_outfit(file: UploadFile = File(...), db: Session = Depends(get_db)):
+
+from auth import get_current_user
+from models import User, Prediction, Feedback
+
+@router.post("/predict/guest")
+async def predict_guest(
+    file: UploadFile = File(...), 
+    city: str = "Delhi",
+    match_weather: bool = True
+):
     """
-    Predict outfit type from image.
-    Uploads image to Cloudinary and returns prediction with confidence.
+    Guest Mode:
+    - In-memory processing only.
+    - No Cloudinary upload.
+    - No database storage.
+    - Returns prediction and weather advice.
+    """
+    # 1. Read bytes
+    image_bytes = await file.read()
+    
+    # 2. Predict (In-memory)
+    image = Image.open(io.BytesIO(image_bytes))
+    features = extract_features(image)
+    outfit, confidence = predict_outfit_type(features)
+    
+    response = {
+        "predicted_class": outfit,
+        "confidence": confidence,
+        "confidence_message": confidence_message(confidence),
+        "is_guest": True
+    }
+
+    # 3. Weather check (Optional)
+    if match_weather:
+        temp, rain_vol, details = weather_svc.get_weather(city)
+        # Use new rules signature
+        outfit_verdict = outfit_weather_check(
+            outfit, 
+            temp, 
+            rain_vol, 
+            min_temp=details.get("min_temp"), 
+            max_temp=details.get("max_temp"), 
+            rain_prob=details.get("daily_rain_prob")
+        )
+        
+        response.update({
+            "weather": {
+                "city": city,
+                "temperature": temp,
+                "rain_prob": details.get("daily_rain_prob"),
+                "description": details.get("description"),
+                "verdict": outfit_verdict
+            }
+        })
+
+    return to_native_types(response)
+
+
+@router.post("/predict/auth")
+async def predict_auth(
+    file: UploadFile = File(...), 
+    city: str = "Delhi", 
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Authenticated Mode:
+    - Uploads to Cloudinary.
+    - Saves to 'predictions' table.
+    - Returns prediction_id for potential feedback/wardrobe saving.
     """
     # 1. Read bytes
     image_bytes = await file.read()
@@ -42,150 +107,139 @@ async def predict_outfit(file: UploadFile = File(...), db: Session = Depends(get
         image_url = upload_result["secure_url"]
         public_id = upload_result["public_id"]
     except Exception as e:
-        # If upload fails, we log/print but might still want to return prediction? 
-        # Or fail? The user specifically wants uploads. So let's handle it safely but try to proceed or report error?
-        # Let's report error if upload is critical, or just print it. 
-        # Given user request "i checked... not uploading", they treat it as a bug.
-        print(f"Warning: Cloudinary upload failed: {e}")
-        image_url = None
-        public_id = None
+        print(f"Cloudinary upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Image upload failed")
 
     # 3. Predict
     image = Image.open(io.BytesIO(image_bytes))
     features = extract_features(image)
-
     outfit, confidence = predict_outfit_type(features)
     
-    needs_confirmation = confidence < CONFIDENCE_THRESHOLD
-
-
-    user_upload = UserUpload(
-        image_url=image_url if image_url else "",
+    # 4. Get Weather
+    temp, rain_vol, details = weather_svc.get_weather(city)
+    
+    # 5. Save Prediction
+    weather_snapshot = json.dumps({
+        "city": city,
+        "temp": temp,
+        "description": details.get("description"),
+        "min": details.get("min_temp"),
+        "max": details.get("max_temp")
+    })
+    
+    new_prediction = Prediction(
+        user_id=current_user.id,
+        image_url=image_url,
         public_id=public_id,
         predicted_category=outfit,
         confidence=confidence,
-        is_verified=0
+        weather_data=weather_snapshot
     )
-    db.add(user_upload)
+    db.add(new_prediction)
     db.commit()
-    db.refresh(user_upload)
+    db.refresh(new_prediction)
 
+    # 6. Run Rules (for response only)
+    outfit_verdict = outfit_weather_check(
+        outfit, 
+        temp, 
+        rain_vol, 
+        min_temp=details.get("min_temp"), 
+        max_temp=details.get("max_temp"), 
+        rain_prob=details.get("daily_rain_prob")
+    )
+    
+    # 7. Alternatives & Accessories
+    accessories = acc_svc.get_all_accessories(outfit, temp, rain_vol)
+    
     return to_native_types({
-        "id": user_upload.id,
+        "prediction_id": new_prediction.id,
         "predicted_class": outfit,
         "confidence": confidence,
         "image_url": image_url,
-        "public_id": public_id,
-        "needs_confirmation": needs_confirmation,
-        "confidence_message": confidence_message(confidence)
+        "weather_verdict": outfit_verdict,
+        "accessories": accessories,
+        "weather_summary": details
     })
 
 
-@router.get("/outfit-categories")
-async def get_outfit_categories():
-    """
-    Get all available outfit categories for manual selection.
-    """
-    categories = get_available_categories()
-    return {"categories": categories}
+
+class FeedbackRequest(BaseModel):
+    prediction_id: Optional[int] = None
+    user_label: Optional[str] = None
+    is_helpful: bool = True
+    weather_context: Optional[dict] = None # For guest feedback
+    model_output: Optional[dict] = None    # For guest feedback
 
 
-@router.post("/outfit-weather")
-async def outfit_weather(
-    file: UploadFile = File(...), 
-    city: str = "Delhi", 
-    material: str = "cotton", 
-    occasion: Optional[str] = None,
-    manual_outfit_type: Optional[str] = None
+@router.post("/feedback")
+async def submit_feedback(
+    feedback_data: FeedbackRequest, 
+    current_user: Optional[User] = Depends(get_current_user), # Optional Auth
+    db: Session = Depends(get_db)
 ):
     """
-    Get outfit weather recommendations.
-    If manual_outfit_type is provided, use it instead of ML prediction.
+    Submit feedback for a prediction.
+    - specific prediction_id (Auth users)
+    - OR generic context (Guest users, logic-only feedback)
     """
-    image = Image.open(file.file)
-    features = extract_features(image)
-
-    # Use manual selection if provided, otherwise use ML prediction
-    if manual_outfit_type:
-        outfit = manual_outfit_type.lower()
-        confidence = 1.0  # User-selected, so 100% confidence
-    else:
-        outfit, confidence = predict_outfit_type(features)
     
-    temp, rain, weather_details = weather_svc.get_weather(city)
+    # Validation: Need either ID or Context
+    if not feedback_data.prediction_id and not (feedback_data.weather_context and feedback_data.model_output):
+        raise HTTPException(status_code=400, detail="Must provide prediction_id (Auth) or context (Guest)")
 
-    outfit_verdict = outfit_weather_check(outfit, temp, rain)
-    accessories = acc_svc.get_all_accessories(outfit, temp, rain, occasion)
+    # If linked to prediction, verify ownership
+    if feedback_data.prediction_id:
+        prediction = db.query(Prediction).filter(Prediction.id == feedback_data.prediction_id).first()
+        if not prediction:
+            raise HTTPException(status_code=404, detail="Prediction not found")
+        
+        # If user is authenticated, check ownership
+        # If prediction has user_id, current_user must match
+        if prediction.user_id and (not current_user or current_user.id != prediction.user_id):
+             raise HTTPException(status_code=403, detail="Not authorized to provide feedback for this prediction")
 
-    material_feedback = material_svc.material_analysis(material, temp)
-    final_verdict = combine_verdicts(outfit_verdict, material_feedback.get("verdict"))
+    # Serialize context if provided
+    weather_json = json.dumps(feedback_data.weather_context) if feedback_data.weather_context else None
+    output_json = json.dumps(feedback_data.model_output) if feedback_data.model_output else None
 
-    alternatives = alt_svc.get_better_alternatives(outfit, temp)
-
-    response = {
-        "outfit_type": outfit,
-        "material": material,
-        "confidence": confidence,
-        "confidence_message": confidence_message(confidence),
-        "temperature": float(temp),
-        "rain_probability": float(rain),
-        "rain_advice": acc_svc.rain_accessories(rain),
-        "weather_breakdown": weather_details,
-        "outfit_verdict": outfit_verdict,
-        "material_verdict": material_feedback.get("verdict"),
-        "material_reason": material_feedback.get("reason"),
-        "final_verdict": final_verdict,
-        "suggested_alternatives": alternatives,
-        "accessories": accessories,
-    }
-
-    return to_native_types(response)
-
-
-# Feedback model for user corrections
-class VerifyRequest(BaseModel):
-    image_id: int
-    user_label: str
-
-
-@router.post("/verify-outfit")
-async def verify_outfit(verify_data: VerifyRequest, db: Session = Depends(get_db)):
-    """
-    Verify/Correct a prediction.
-    Updates the database with the correct label and marks as verified.
-    """
-    upload = db.query(UserUpload).filter(UserUpload.id == verify_data.image_id).first()
+    new_feedback = Feedback(
+        prediction_id=feedback_data.prediction_id,
+        user_id=current_user.id if current_user else None,
+        user_label=feedback_data.user_label,
+        is_helpful=1 if feedback_data.is_helpful else 0,
+        weather_context=weather_json,
+        model_output=output_json
+    )
     
-    if not upload:
-        raise HTTPException(status_code=404, detail="Image record not found")
-    
-    upload.user_label = verify_data.user_label
-    upload.is_verified = 1
+    db.add(new_feedback)
     db.commit()
     
-    return {
-        "message": "Verification saved successfully", 
-        "status": "success",
-        "verified_label": verify_data.user_label
-    }
+    return {"status": "success", "message": "Feedback received"}
 
 
 @router.get("/debug/verified-uploads")
 async def get_verified_uploads(db: Session = Depends(get_db)):
     """
-    Debug endpoint to view all verified user uploads.
-    Useful for checking if feedback is being saved correctly on the server.
+    Debug: View qualitative feedback.
     """
-    uploads = db.query(UserUpload).filter(UserUpload.is_verified == 1).all()
+    feedbacks = db.query(Feedback).all()
+    results = []
     
-    return [
-        {
-            "id": u.id,
-            "image_url": u.image_url,
-            "predicted": u.predicted_category,
-            "user_label": u.user_label,
-            "confidence": u.confidence,
-            "created_at": u.created_at
+    for f in feedbacks:
+        item = {
+            "id": f.id,
+            "user_label": f.user_label,
+            "is_helpful": bool(f.is_helpful),
+            "created_at": f.created_at
         }
-        for u in uploads
-    ]
+        
+        if f.prediction:
+            item["image_url"] = f.prediction.image_url
+            item["predicted"] = f.prediction.predicted_category
+        else:
+            item["context"] = "Guest Feedback (No Image)"
+            
+        results.append(item)
+            
+    return results

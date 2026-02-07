@@ -1,49 +1,55 @@
-def outfit_weather_check(outfit, temp, rain):
+def outfit_weather_check(outfit, temp, rain, min_temp=None, max_temp=None, rain_prob=0):
     outfit = outfit.lower()
+    
+    # Use range or fallback to current temp
+    low_temp = min_temp if min_temp is not None else temp
+    high_temp = max_temp if max_temp is not None else temp
+    is_rainy = rain_prob > 40 or rain > 0 # Rain prob > 40% or current rain > 0mm
+    
+    reasons = []
+    status = "✅"
 
-    #  EXTREME COLD
-    if temp <= 5:
+    # 1. COLD CHECKS (based on daily minimum)
+    if low_temp <= 5:
         if outfit not in ["jacket", "coat", "sweater", "hoodie"]:
-            return "❌ Extreme cold – thermal wear and heavy jacket required"
-        return "✅ Suitable for extreme cold"
+            reasons.append("Extreme cold expected – thermal wear and heavy jacket required")
+            status = "❌"
+    elif 6 <= low_temp <= 12:
+        if outfit in ["t-shirt", "dress", "kurti", "shirt", "polo", "top"]:
+            reasons.append("Cold morning/evening – add jacket or sweater")
+            status = "❌" if status == "✅" else status
 
-    #  COLD
-    if 6 <= temp <= 12:
-        if outfit in ["t-shirt", "dress", "kurti", "shirt"]:
-            return "❌ Cold weather – add jacket or sweater"
-        return "✅ Suitable for cold weather"
+    # 2. HEAT CHECKS (based on daily maximum)
+    if high_temp >= 37:
+        if outfit in ["jeans", "jacket", "coat", "hoodie", "sweater"]:
+            reasons.append("Extreme heat likely – wear loose, light cotton clothes")
+            status = "❌"
+    elif 31 <= high_temp <= 36:
+        if outfit in ["jacket", "coat", "sweater", "hoodie"]:
+             reasons.append("Afternoon will be hot – avoid heavy layers")
+             status = "❌" if status == "✅" else status
 
-    #  COOL
-    if 13 <= temp <= 18:
-        if outfit in ["shorts", "sandals"]:
-            return "❌ Cool weather – avoid open footwear"
-        return "✅ Suitable for cool weather"
+    # 3. RAIN CHECKS
+    if is_rainy:
+        if outfit in ["sandals", "white shoes", "suede shoes", "long skirt", "maxi dress"]:
+            reasons.append("Rain expected – avoid open footwear or long trailing clothes")
+            status = "❌" if status == "✅" else status
+        elif outfit in ["white t-shirt", "white shirt", "white dress"]:
+            reasons.append("Rain risk – white clothes may become transparent")
+            status = "⚠" if status == "✅" else status
 
-    #  MILD
-    if 19 <= temp <= 24:
-        if rain >= 10 and outfit in ["sandals"]:
-            return "❌ Rainy – avoid sandals"
-        return "✅ Comfortable weather for this outfit"
+    # 4. GENERAL COMFORT (Average feel)
+    # If no extreme warnings, give general advice based on current temp
+    if not reasons:
+        if 19 <= temp <= 24:
+             return "✅ Comfortable weather for this outfit"
+        elif 13 <= temp <= 18 and outfit in ["shorts", "skirt"]:
+             return "⚠ Might be slightly cool for shorts/skirt"
 
-    #  WARM
-    if 25 <= temp <= 30:
-        if outfit in ["jacket", "coat", "sweater"]:
-            return "❌ Too warm – avoid heavy clothing"
-        return "✅ Suitable for warm weather"
+    if not reasons:
+        return "✅ Good choice for today's weather"
 
-    #  HOT
-    if 31 <= temp <= 36:
-        if outfit not in ["t-shirt", "cotton shirt", "dress"]:
-            return "❌ Hot weather – wear light cotton clothes"
-        return "✅ Suitable for hot weather"
-
-    #  EXTREME HOT
-    if temp >= 37:
-        if outfit in ["jeans", "jacket", "coat"]:
-            return "❌ Extreme heat – wear loose cotton clothes"
-        return "✅ Suitable but stay hydrated"
-
-    return "⚠ Weather condition unclear"
+    return f"{status} {'; '.join(reasons)}"
 def combine_verdicts(outfit_verdict, material_verdict):
     """
     Combines outfit type verdict and material verdict into a final comfort verdict.

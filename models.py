@@ -15,7 +15,9 @@ class User(Base):
     password = Column(String, nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+
     outfits = relationship("Outfit", back_populates="owner", cascade="all, delete-orphan")
+    predictions = relationship("Prediction", back_populates="owner", cascade="all, delete-orphan")
 
     def to_dict(self):
         """Convert user to dictionary (without password)"""
@@ -63,35 +65,74 @@ class Outfit(Base):
         }
 
 
+class Prediction(Base):
+    """
+    Store predictions for AUTHENTICATED users.
+    Guest predictions are not stored.
+    """
+    __tablename__ = "predictions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    outfit_id = Column(Integer, ForeignKey("outfits.id"), nullable=True) # If saved to wardrobe
+    
+    image_url = Column(String, nullable=False)
+    public_id = Column(String, nullable=True)
+    
+    predicted_category = Column(String, nullable=True)
+    confidence = Column(Float, nullable=True)
+    weather_data = Column(String, nullable=True) # JSON string
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    owner = relationship("User", back_populates="predictions")
+    feedback = relationship("Feedback", back_populates="prediction", uselist=False)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "image_url": self.image_url,
+            "predicted_category": self.predicted_category,
+            "confidence": self.confidence,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+
+
+class Feedback(Base):
+    """
+    Store user feedback for predictions.
+    Can be linked to a Prediction (auth) or standalone (guest context).
+    """
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    prediction_id = Column(Integer, ForeignKey("predictions.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True) # Null for guests
+    
+    weather_context = Column(String, nullable=True) # JSON string
+    model_output = Column(String, nullable=True) # JSON string
+    user_label = Column(String, nullable=True) # Manual correction
+    is_helpful = Column(Integer, default=1) # 1=Yes, 0=No
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    prediction = relationship("Prediction", back_populates="feedback")
+
+
 class UserUpload(Base):
     """
-    Store for all user uploaded images for prediction and future learning.
-    This enables the "Offline Learning" workflow.
+    DEPRECATED: Replaced by Prediction and Feedback tables.
+    Kept for backward compatibility to avoid migration errors if table exists.
     """
     __tablename__ = "user_uploads"
 
     id = Column(Integer, primary_key=True, index=True)
     image_url = Column(String, nullable=False)
-    public_id = Column(String, nullable=True) # Cloudinary ID
-    
-    # ML Prediction
+    public_id = Column(String, nullable=True) 
     predicted_category = Column(String, nullable=True)
     confidence = Column(Float, nullable=True)
-    
-    # User Verification
-    user_label = Column(String, nullable=True) # Correct label provided by user
-    is_verified = Column(Integer, default=0)   # 0=Pending, 1=Verified, -1=Rejected (e.g. bad image)
-    
+    user_label = Column(String, nullable=True) 
+    is_verified = Column(Integer, default=0)   
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "image_url": self.image_url,
-            "predicted_category": self.predicted_category,
-            "confidence": self.confidence,
-            "user_label": self.user_label,
-            "is_verified": bool(self.is_verified),
-            "created_at": self.created_at.isoformat() if self.created_at else None
-        }
 
