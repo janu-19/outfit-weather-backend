@@ -45,12 +45,21 @@ async def predict_guest(
     - Returns prediction and weather advice.
     """
     # 1. Read bytes
-    image_bytes = await file.read()
+    try:
+        image_bytes = await file.read()
+    except Exception as e:
+        print(f"Error reading upload file: {e}")
+        raise HTTPException(status_code=400, detail=f"Invalid file upload: {str(e)}")
     
     # 2. Predict (In-memory)
-    image = Image.open(io.BytesIO(image_bytes))
-    features = extract_features(image)
-    outfit, confidence = predict_outfit_type(features)
+    try:
+        image = Image.open(io.BytesIO(image_bytes))
+        features = extract_features(image)
+        outfit, confidence = predict_outfit_type(features)
+    except Exception as e:
+        print(f"Error in ML prediction: {e}")
+        # Return the actual error to help debugging
+        raise HTTPException(status_code=500, detail=f"Prediction failed: {str(e)}")
     
     response = {
         "predicted_class": outfit,
@@ -61,29 +70,34 @@ async def predict_guest(
 
     # 3. Weather check (Optional)
     if match_weather:
-        temp, rain_vol, details = weather_svc.get_weather(city)
-        # Use new rules signature
-        outfit_verdict = outfit_weather_check(
-            outfit, 
-            temp, 
-            rain_vol, 
-            min_temp=details.get("min_temp"), 
-            max_temp=details.get("max_temp"), 
-            rain_prob=details.get("daily_rain_prob")
-        )
-        
-        response.update({
-            "weather": {
-                "city": city,
-                "temperature": temp,
-                "min_temp": details.get("min_temp"),
-                "max_temp": details.get("max_temp"),
-                "rain_prob": details.get("daily_rain_prob"),
-                "description": details.get("description"),
-                "verdict": outfit_verdict
-            }
-        })
-
+        try:
+            temp, rain_vol, details = weather_svc.get_weather(city)
+            # Use new rules signature
+            outfit_verdict = outfit_weather_check(
+                outfit, 
+                temp, 
+                rain_vol, 
+                min_temp=details.get("min_temp"), 
+                max_temp=details.get("max_temp"), 
+                rain_prob=details.get("daily_rain_prob")
+            )
+            
+            response.update({
+                "weather": {
+                    "city": city,
+                    "temperature": temp,
+                    "min_temp": details.get("min_temp"), 
+                    "max_temp": details.get("max_temp"), 
+                    "rain_prob": details.get("daily_rain_prob"),
+                    "description": details.get("description"),
+                    "verdict": outfit_verdict
+                }
+            })
+        except Exception as e:
+            print(f"Error in weather service: {e}")
+            # Do not fail the whole request if only weather fails, but log it
+            response["weather_error"] = str(e)
+            
     return to_native_types(response)
 
 
