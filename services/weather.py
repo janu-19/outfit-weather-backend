@@ -6,7 +6,7 @@ from datetime import datetime
 # Load environment variables from .env file
 load_dotenv()
 
-def get_weather(city):
+def get_weather(city=None, lat=None, lon=None):
     API_KEY = os.getenv("OPENWEATHER_API_KEY")
     # Graceful fallback instead of crash
     if not API_KEY:
@@ -30,24 +30,32 @@ def get_weather(city):
         "daily_rain_prob": 0
     }
 
-    if not city:
-        print("City name is empty")
+    # If coordinates provided, prefer them
+    if lat is not None and lon is not None:
+        source = f"lat={lat}, lon={lon}"
+    elif not city:
+        print("City name is empty and no coordinates provided")
         return 20, 0, default_details
+    else:
+        source = city
 
     # Use 5 day / 3 hour forecast to get daily min/max
     url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {
-        "q": city,
         "appid": API_KEY,
         "units": "metric"
     }
+    if lat is not None and lon is not None:
+        params.update({"lat": lat, "lon": lon})
+    else:
+        params.update({"q": city})
 
     try:
         response = requests.get(url, params=params, timeout=5)
         data = response.json()
 
         if response.status_code != 200:
-            print(f"Weather API error for {city}: {data}")
+            print(f"Weather API error for {source}: {data}")
             return 20, 0, default_details
 
         # Get current items for today (approximate by taking first 8 intervals = 24h)
@@ -117,7 +125,7 @@ def get_weather(city):
             "daily_rain_prob": daily_rain_prob
         }
 
-        print(f"Weather data for {city}: current={current_temp}, min={min_temp}, max={max_temp}, rain_prob={daily_rain_prob}%")
+        print(f"Weather data for {source}: current={current_temp}, min={min_temp}, max={max_temp}, rain_prob={daily_rain_prob}%")
         
         # Return current_temp for main logic, but pass daily stats in details
         # Pass predicted rain (pop) as the main rain metric if it's high, or volume

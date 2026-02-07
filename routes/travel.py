@@ -1,12 +1,13 @@
 from fastapi import APIRouter
+from typing import Optional
 from services import weather
 from cores.utils import to_native_types
 
 router = APIRouter()
 
 @router.get("/travel-pack")
-def travel_pack(city: str):
-    temp, rain, weather_details = weather.get_weather(city)
+def travel_pack(city: Optional[str] = None, lat: Optional[float] = None, lon: Optional[float] = None):
+    temp, rain, weather_details = weather.get_weather(city=city, lat=lat, lon=lon)
 
     clothes = {
         "tops": [],
@@ -80,6 +81,8 @@ def travel_pack(city: str):
 
     return to_native_types({
         "city": city,
+        "latitude": lat,
+        "longitude": lon,
         "temperature": round(float(temp), 1),
         "rain_probability": float(rain),
         "packing_recommendation": clothes

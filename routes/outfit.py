@@ -1,13 +1,14 @@
-from fastapi import APIRouter, UploadFile, File, Body, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, Body, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
-from models import UserUpload
+from models import UserUpload, User, Prediction, Feedback
 from pydantic import BaseModel
 from typing import Optional
 from PIL import Image
 import os
 import json
 from datetime import datetime
+import io
 
 from ml.extract_features import extract_features
 from ml.classifier import predict_outfit_type, get_available_categories
@@ -17,25 +18,24 @@ from services import alternatives as alt_svc
 from services import accessories as acc_svc
 from rules.outfit_weather import outfit_weather_check, combine_verdicts
 from cores.utils import to_native_types, confidence_message
+from cloudinary_config import upload_image_to_cloudinary
+from auth import get_current_user
 
 router = APIRouter()
 
 # Confidence threshold - if below this, ask user to confirm
 CONFIDENCE_THRESHOLD = 0.6
 
-
-from cloudinary_config import upload_image_to_cloudinary
-import io
-
-
-from auth import get_current_user
-from models import User, Prediction, Feedback
-
 @router.post("/predict/guest")
 async def predict_guest(
     file: UploadFile = File(...), 
-    city: str = "Delhi",
-    match_weather: bool = True
+    city: Optional[str] = Form(None),
+    lat: Optional[float] = Form(None),
+    lon: Optional[float] = Form(None),
+    occasion: str = Form("Casual"),
+    material: Optional[str] = Form(None),
+    manual_outfit_type: Optional[str] = Form(None),
+    match_weather: bool = Form(True)
 ):
     """
     Guest Mode:
@@ -55,7 +55,15 @@ async def predict_guest(
     try:
         image = Image.open(io.BytesIO(image_bytes))
         features = extract_features(image)
+        # Use manual type if provided and valid? For now we just predict.
+        # Could use manual type to override or hint.
         outfit, confidence = predict_outfit_type(features)
+        
+        if manual_outfit_type and manual_outfit_type.strip():
+            # Check if manual matches predicted or override? 
+            # For simple flows, let's trust the model but maybe return manual as note?
+            pass 
+
     except Exception as e:
         print(f"Error in ML prediction: {e}")
         # Return the actual error to help debugging
@@ -65,13 +73,15 @@ async def predict_guest(
         "predicted_class": outfit,
         "confidence": confidence,
         "confidence_message": confidence_message(confidence),
-        "is_guest": True
+        "is_guest": True,
+        "occasion": occasion
     }
 
     # 3. Weather check (Optional)
     if match_weather:
         try:
-            temp, rain_vol, details = weather_svc.get_weather(city)
+            print(f"Fetching weather for city: {city}, lat: {lat}, lon: {lon}") # Debug log
+            temp, rain_vol, details = weather_svc.get_weather(city=city, lat=lat, lon=lon)
             # Use new rules signature
             outfit_verdict = outfit_weather_check(
                 outfit, 
@@ -98,13 +108,29 @@ async def predict_guest(
             # Do not fail the whole request if only weather fails, but log it
             response["weather_error"] = str(e)
             
+    # Add accessories (Logic from auth endpoint)
+    try:
+        # Re-fetching just for accessories logic to be safe/clean
+        # Prefer coordinates if available
+        t_temp, t_rain, _ = weather_svc.get_weather(city=city, lat=lat, lon=lon)
+        accessories = acc_svc.get_all_accessories(outfit, t_temp, t_rain)
+        response["accessories"] = accessories
+    except Exception as e:
+        print(f"Error fetching accessories: {e}")
+        response["accessories"] = []
+
     return to_native_types(response)
 
 
 @router.post("/predict/auth")
 async def predict_auth(
     file: UploadFile = File(...), 
-    city: str = "Delhi", 
+    city: Optional[str] = Form(None),
+    lat: Optional[float] = Form(None),
+    lon: Optional[float] = Form(None),
+    occasion: str = Form("Casual"),
+    material: Optional[str] = Form(None),
+    manual_outfit_type: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -132,7 +158,7 @@ async def predict_auth(
     outfit, confidence = predict_outfit_type(features)
     
     # 4. Get Weather
-    temp, rain_vol, details = weather_svc.get_weather(city)
+    temp, rain_vol, details = weather_svc.get_weather(city=city, lat=lat, lon=lon)
     
     # 5. Save Prediction
     weather_snapshot = json.dumps({
@@ -177,7 +203,6 @@ async def predict_auth(
         "accessories": accessories,
         "weather_summary": details
     })
-
 
 
 class FeedbackRequest(BaseModel):
