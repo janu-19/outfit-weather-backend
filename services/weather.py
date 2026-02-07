@@ -8,8 +8,14 @@ load_dotenv()
 
 def get_weather(city):
     API_KEY = os.getenv("OPENWEATHER_API_KEY")
+    # Graceful fallback instead of crash
     if not API_KEY:
-        raise ValueError("OPENWEATHER_API_KEY environment variable is not set. Please create a .env file with your API key.")
+        print("WARNING: OPENWEATHER_API_KEY is not set. Returning default/empty weather data.")
+        return 20, 0, {
+            "humidity": None, "clouds": None, "description": "Unknown",
+            "sun_exposure": "Unknown", "min_temp": 20, "max_temp": 20, 
+            "daily_rain_prob": 0
+        }
     
     city = city.strip() if city else ""
 

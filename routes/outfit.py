@@ -76,6 +76,8 @@ async def predict_guest(
             "weather": {
                 "city": city,
                 "temperature": temp,
+                "min_temp": details.get("min_temp"),
+                "max_temp": details.get("max_temp"),
                 "rain_prob": details.get("daily_rain_prob"),
                 "description": details.get("description"),
                 "verdict": outfit_verdict
