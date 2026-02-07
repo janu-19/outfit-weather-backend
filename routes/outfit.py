@@ -119,6 +119,42 @@ async def predict_guest(
         print(f"Error fetching accessories: {e}")
         response["accessories"] = []
 
+    # 4. Record prediction for metrics (guest or auth)
+    try:
+        from database import SessionLocal
+        from sqlalchemy import text
+        from datetime import datetime
+        # create a lightweight DB session to record the prediction
+        db = SessionLocal()
+        weather_snapshot = None
+        if response.get("weather"):
+            wd = response["weather"]
+            weather_snapshot = json.dumps({
+                "min_temp": wd.get("min_temp"),
+                "max_temp": wd.get("max_temp"),
+                "rain_prob": wd.get("rain_prob")
+            })
+
+        # Use raw SQL to insert guest prediction (bypasses NOT NULL constraints on user_id)
+        now_utc = datetime.utcnow().isoformat()
+        sql = text("""
+        INSERT INTO predictions (user_id, is_guest, image_url, public_id, predicted_category, confidence, weather_data, created_at)
+        VALUES (NULL, 1, NULL, NULL, :outfit, :confidence, :weather_data, :created_at)
+        """)
+        db.execute(sql, {
+            "outfit": outfit,
+            "confidence": float(confidence),
+            "weather_data": weather_snapshot,
+            "created_at": now_utc
+        })
+        db.commit()
+        print(f"✓ Guest prediction recorded (outfit={outfit}, confidence={confidence})")
+        db.close()
+    except Exception as e:
+        print(f"✗ Failed to record guest prediction for metrics: {e}")
+        import traceback
+        traceback.print_exc()
+
     return to_native_types(response)
 
 
@@ -171,6 +207,7 @@ async def predict_auth(
     
     new_prediction = Prediction(
         user_id=current_user.id,
+        is_guest=False,
         image_url=image_url,
         public_id=public_id,
         predicted_category=outfit,
@@ -203,6 +240,30 @@ async def predict_auth(
         "accessories": accessories,
         "weather_summary": details
     })
+
+
+
+@router.get("/metrics")
+def get_metrics(db: Session = Depends(get_db)):
+    """
+    Return simple usage metrics:
+    - total_users: distinct users count
+    - total_predictions: total rows in predictions table
+    """
+    try:
+        from sqlalchemy import func
+        total_predictions = db.query(func.count(Prediction.id)).scalar() or 0
+        total_users = db.query(func.count(func.distinct(User.id))).scalar() or 0
+        return to_native_types({
+            "total_users": int(total_users),
+            "total_predictions": int(total_predictions)
+        })
+    except Exception as e:
+        print(f"Error computing metrics: {e}")
+        return to_native_types({
+            "total_users": 0,
+            "total_predictions": 0
+        })
 
 
 class FeedbackRequest(BaseModel):

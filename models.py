@@ -1,7 +1,7 @@
 """
 Database models for wardrobe system
 """
-from sqlalchemy import Column, Integer, String, Date, DateTime, Float, ForeignKey
+from sqlalchemy import Column, Integer, String, Date, DateTime, Float, ForeignKey, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from database import Base
@@ -73,15 +73,18 @@ class Prediction(Base):
     __tablename__ = "predictions"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Allow null for guest predictions
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    is_guest = Column(Boolean, default=False, nullable=False)
     outfit_id = Column(Integer, ForeignKey("outfits.id"), nullable=True) # If saved to wardrobe
     
-    image_url = Column(String, nullable=False)
+    # For guest predictions we do not store images
+    image_url = Column(String, nullable=True)
     public_id = Column(String, nullable=True)
     
     predicted_category = Column(String, nullable=True)
     confidence = Column(Float, nullable=True)
-    weather_data = Column(String, nullable=True) # JSON string
+    weather_data = Column(String, nullable=True) # JSON string (min/max/rain prob)
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
